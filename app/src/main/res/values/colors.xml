@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#2B6CB0</color>
+    <color name="ring_bg">#1A202C</color>
+    <color name="white">#FFFFFF</color>
+    <color name="muted">#A0AEC0</color>
+</resources>

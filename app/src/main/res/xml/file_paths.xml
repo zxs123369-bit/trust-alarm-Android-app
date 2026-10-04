@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 可共享的路径。
+
+  为什么需要：Android 7+ 禁止用 file:// URI 跨进程传文件
+  （会抛 FileUriExposedException）。系统安装器是另一个进程，
+  要读我们下载的 APK 就必须走 FileProvider 的 content:// URI。
+
+  注意：只需开放下载目录和缓存目录 —— 不要把整个 files 目录或根目录
+  暴露出去（那等于让任何持有 URI 的应用读我们的私有文件）。
+-->
+<paths>
+    <!-- 自更新下载的 APK 落在 App 专属外部下载目录 -->
+    <external-files-path
+        name="downloads"
+        path="Download/" />
+
+    <!-- 兜底：部分机型/版本会落到 cache -->
+    <cache-path
+        name="cache"
+        path="." />
+</paths>

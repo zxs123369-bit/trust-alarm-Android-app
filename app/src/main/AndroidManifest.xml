@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 网络：与后端通信 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ★ 电池优化白名单：申请加入系统 Doze 白名单，使闹钟在省电/息屏下仍能准时唤醒。
+         「后台可靠性」页会查询本权限状态并引导用户手动开启（系统级开关，App 无权代改）。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- ★ 核心能力：精确闹钟。Android 12+ 必须显式声明，
+         否则 setExactAndAllowWhileIdle 会被降级为不精确闹钟（可能差几分钟）。
+         这正是「信任闹钟」的立身之本，必须申请。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- ★ 全屏通知意图（闹钟到点在锁屏上直接弹出全屏界面）。
+         Android 10+ 若未声明此权限，setFullScreenIntent() 会被**静默降级**为
+         普通通知 —— 界面上锁屏不弹、只响一声，用户以为「没响」。
+         这是响铃链路里最容易漏掉的一环：代码里调了 setFullScreenIntent
+         也不报错，但没有这个权限就不生效。
+         （注意：Android 14 起系统对第三方 App 的该权限有额外管理，
+          用户可在设置里撤销；撤销后仍应通过通知+铃声+震动叫醒。） -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- 开机自启后重新注册闹钟（否则重启手机闹钟会丢） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- 前台服务：保持心跳与闹钟同步（Android 14 需声明类型） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 开机广播里启动前台服务需要（Android 12+ 对后台启动 FGS 有限制） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Android 8+：安装 APK 需要这个权限（用户仍需在系统界面点确认） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
+
+    <!-- Android 11+ 展示软件包可见性（用于跳系统时钟设置页等） -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
+        <!-- 自更新要能查到系统安装器，否则 startActivity 会被拦 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TrustAlarm"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic：后端目前是 http://192.168.x.x:8848，
+             局域网调试需要允许明文。上线走 HTTPS 后应关闭并配 networkSecurityConfig。 -->
+
+        <!-- ★ 启动页：原生 Compose 界面（阶段 2 起用）。
+             旧 WebView 壳（.ui.WebMainActivity）暂时保留在包里，
+             但**不再是启动页** —— 阶段 6（全部页面迁移完）会删掉它。
+
+             为什么分两步而不是直接替换：
+             迁移期间新壳只有登录页可用，其余页面是占位；
+             旧壳仍可作为对照与退路。**不允许出现「网页版已删、
+             原生版还没通」的中间状态发布**（见原生重写计划）。 -->
+        <activity
+            android:name=".ui.shell.MainComposeActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:label="@string/app_name"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 旧 WebView 壳：保留但不再作为启动页（阶段 6 删除） -->
+        <activity
+            android:name=".ui.WebMainActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:label="@string/app_name"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- 旧的纯原生登录页：保留作为兜底入口（桥接不可用时手动进） -->
+        <activity
+            android:name=".ui.LoginActivity"
+            android:exported="false"
+            android:label="@string/app_name" />
+
+        <!-- 旧的纯原生主页：保留作为兜底（不再作为启动页） -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="false" />
+
+        <!-- 闹钟响铃界面：锁屏上直接显示，用户点「关闭」才停。
+             
+             ★ exported="true" + intent-filter 是必要的（用户实测「响了但看不到」）：
+             原为 exported="false"。Android 10+ 对后台启动 Activity 有硬限制，
+             系统日志明确为 `Background activity launch blocked ...
+             allowsBackgroundActivityStarts=false`。即使走前台服务的
+            全屏通知（setFullScreenIntent），部分 ROM 也会因为目标 Activity
+             不可从外部解析而降级为普通通知 —— 结果就是「有声音，但屏幕上
+             什么都看不到，解锁后也不知道是谁在响」。
+             
+             改为可被系统解析后，全屏通知 / 锁屏展示 / 通知点击三条路径
+             都能真正唤起本界面。安全上无风险：本 Activity 不接受任何
+             外部参数执行敏感操作，只展示传入的时间与备注并停掉响铃服务。
+             
+             excludeFromRecents：不进入最近任务列表（闹钟结束即走）。 -->
+        <activity
+            android:name=".alarm.AlarmRingActivity"
+            android:exported="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:noHistory="false">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- ★ 闹钟接收器：AlarmManager 到点后回调这里。
+             它只做转发，真正响铃由 AlarmRingService 负责（见其注释）。 -->
+        <receiver
+            android:name=".alarm.AlarmReceiver"
+            android:exported="false" />
+
+        <!-- ★ 闹钟响铃前台服务：负责铃声、震动、通知、拉起全屏界面。
+             为什么必须是前台服务：Android 10+ 禁止后台 App 直接 startActivity，
+             广播接收器里拉起界面会被系统静默拦截。前台服务处于 FGS 状态，
+             是系统放行后台启动 Activity 的场景之一；即使界面被拦，
+             通知+铃声+震动仍然生效，不会再出现「到点完全没反应」。
+
+             用 specialUse 而非 shortService：shortService 只允许约 3 分钟，
+             而闹钟最长可能响 5 分钟（AUTO_STOP_MS）。 -->
+        <service
+            android:name=".alarm.AlarmRingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="alarm_ringing" />
+        </service>
+
+
+        <!-- 开机自启：重新注册仍待生效的闹钟 -->
+        <receiver
+            android:name=".alarm.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 后台常驻服务：心跳上报 + 闹钟同步注册。
+             闹钟同步必须由它负责，不能依赖网页页面（见 HeartbeatService 注释）。 -->
+        <service
+            android:name=".service.HeartbeatService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="alarm_sync_heartbeat" />
+        </service>
+
+        <!-- 自更新：把下载的 APK 以 content:// 形式交给系统安装器。
+             Android 7+ 不允许 file:// 跨进程传文件，必须用 FileProvider。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+
+</manifest>

@@ -1,0 +1,25 @@
+# 构建产物
+build/
+.gradle/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# 本机配置（含 SDK 绝对路径，因机器而异）
+local.properties
+
+# 签名密钥与口令（切勿提交）
+keystore/
+*.jks
+*.keystore
+
+# IDE
+.idea/
+.vscode/
+*.iml
+captures/
+
+# 系统
+.DS_Store
+Thumbs.db

@@ -1,0 +1,133 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.trustalarm.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.trustalarm.app"
+        minSdk 26          // 26+ 才能用 NotificationChannel 与精确闹钟 API
+        targetSdk 34
+        versionCode 30
+        versionName "1.2.7"
+
+        // 契约验证测试（androidTest）用：把账号从命令行传进去，不写死在源码里
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments(
+            phone: (project.findProperty('phone') ?: '').toString(),
+            password: (project.findProperty('password') ?: '').toString(),
+        )
+
+        // 后端地址：从 gradle 属性注入，不再写死在 Kotlin 里。
+        //
+        // 为什么：写死导致模拟器无法联调（模拟器 NAT 访问不到局域网 192.168.x.x，
+        // 要用 10.0.2.2 才通宿主机）。现在同一份源码可出不同用途的包：
+        //   gradle assembleDebug                                → 模拟器（默认 10.0.2.2）
+        //   gradle assembleRelease                              → 正式包（默认公网域名）
+        //   gradle assembleXxx -PapiBase=http://host:port       → 显式覆盖
+        //
+        // ★ 历史缺陷（P0，本轮修复）：默认值曾是局域网 IP 192.168.1.3，且 release
+        //   构建从未传 -PapiBase —— 于是正式包的 API_BASE 被烧成局域网地址，
+        //   用户手机只要不在该局域网，登录/心跳/闹钟全废（正是"登录不上"根因）。
+        //   现在默认值按构建类型给：debug 走模拟器，release 走公网，兜底安全。
+    }
+
+    // 正式签名配置。
+    //
+    // 为什么要正式签名：debug 签名的 APK 无法覆盖安装内容提供者不同的版本，
+    // 且上架/自动更新都要求固定签名的 release 包。
+    // keystore 路径与口令从 gradle 属性或环境变量读，不写进仓库。
+    signingConfigs {
+        release {
+            def ksPath = project.findProperty('ksPath') ?: System.getenv('TA_KS_PATH')
+            if (ksPath) {
+                storeFile file(ksPath)
+                storePassword project.findProperty('ksPass') ?: System.getenv('TA_KS_PASS')
+                keyAlias project.findProperty('ksAlias') ?: System.getenv('TA_KS_ALIAS')
+                keyPassword project.findProperty('ksKeyPass') ?: System.getenv('TA_KS_KEY_PASS')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // 便于区分同一台机器上的 debug / release 包
+            applicationIdSuffix ""
+            // 模拟器经 10.0.2.2 访问宿主机后端；-PapiBase 可覆盖
+            buildConfigField "String", "API_BASE",
+                "\"${project.findProperty('apiBase') ?: 'http://10.0.2.2:8848'}\""
+        }
+        release {
+            minifyEnabled false
+            // 有正式签名就用正式的；没有则退回 debug（本地测试用）
+            signingConfig project.findProperty('ksPath') || System.getenv('TA_KS_PATH')
+                ? signingConfigs.release
+                : signingConfigs.debug
+            // 正式包默认连公网后端；-PapiBase 可覆盖
+            buildConfigField "String", "API_BASE",
+                "\"${project.findProperty('apiBase') ?: 'http://101.133.229.168'}\""
+        }
+    }
+
+    buildFeatures {
+        viewBinding true
+        buildConfig true      // API_BASE 注入需要
+        compose true          // [探针] 验证 Compose 依赖可解析
+    }
+
+    composeOptions {
+        // Kotlin 1.9.24 对应 Compose Compiler 1.5.14
+        kotlinCompilerExtensionVersion '1.5.14'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
+    // WebViewAssetLoader：把 assets 映射到虚拟 https 域。
+    // 必需 —— 网页版是 ES Module，file:// 下 import 会被 CORS 拦掉（白屏）。
+    implementation 'androidx.webkit:webkit:1.11.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+    // 用 OkHttp 直接打后端 API（不引体积大的 Retrofit/Moshi，够用即可）
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // ---- [探针] Compose 相关依赖：验证能否从镜像解析 ----
+    def composeBom = platform('androidx.compose:compose-bom:2024.06.00')
+    implementation composeBom
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.activity:activity-compose:1.9.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4'
+
+    // ---- 契约验证测试（androidTest，跑在模拟器/真机上打活后端）----
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1'
+
+    // ---- 纯 JVM 单元测试（test/，不打设备，秒级）----
+    // 覆盖易回归的纯逻辑：Message.payload 二次解析、Dest.parse 路由恢复。
+    testImplementation 'junit:junit:4.13.2'
+    // ★ 关键：android.jar 里的 org.json 是空壳（方法体抛 "not mocked"），
+    //   单元测试必须用真实实现，否则 Model.fromJson 这类解析逻辑测不了。
+    testImplementation 'org.json:json:20240303'
+    // ★ 中文路径坑：AGP 传给测试 worker 的 classpath 含项目真实路径，
+    //   若编码不是 UTF-8，中文目录名会变乱码 → JUnit 报
+    //   ClassNotFoundException（测试类明明编译出来了）。见 gradle.properties。
+}

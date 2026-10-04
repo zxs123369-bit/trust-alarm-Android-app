@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#2b6cb0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="信任闹钟">
+<meta name="format-detection" content="telephone=no">
+<title>信任闹钟</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./css/base.css">
+</head>
+<body>
+<div id="app">
+  <div id="view"></div>
+</div>
+<div id="toast-wrap"></div>
+<div id="modal-wrap"></div>
+
+<!-- 安装引导（PWA 添加到主屏幕） -->
+<div id="install-bar" class="install-bar hidden">
+  <span class="ib-icon">⏰</span>
+  <span class="ib-text grow"></span>
+  <button class="ib-btn">添加</button>
+  <button class="ib-close" aria-label="关闭">×</button>
+</div>
+
+<noscript>
+  <div class="page">
+    <div class="empty">
+      <div class="ico">⚠️</div>
+      <div class="t">需要启用 JavaScript</div>
+      <div class="s">本应用依赖脚本运行，请在浏览器设置中开启。</div>
+    </div>
+  </div>
+</noscript>
+
+<script type="module" src="./js/main.js"></script>
+
+<!-- 启动兜底看门狗（★ 真机实测：资源加载挂起会导致永久白屏）
+     场景：WebView 从 assets 取 css/js 失败或挂起时，页面会停在
+     readyState=loading、body 都没建起来的状态（实测复现：base.css 与
+     main.js 的请求既不完成也不失败，永远 pending）。用户看到纯白屏，
+     既没有报错也没有重试入口 —— 尤其长辈用户会以为「手机坏了」。
+
+     这里用一段**内联**脚本（不依赖任何外部资源）在启动后 8 秒检查：
+     若 #view 仍是空的，就渲染一个可操作的重试界面。
+     为什么用内联而不是放进 main.js：main.js 本身正是可能加载失败的那个，
+     兜底逻辑必须比它更早、更可靠地存在。 -->
+<script>
+(function () {
+  var TIMEOUT_MS = 8000;
+  function booted() {
+    var v = document.getElementById('view');
+    // main.js 启动成功会往 #view 写内容（或至少渲染布局骨架）
+    return !!(v && v.firstElementChild);
+  }
+  setTimeout(function () {
+    if (booted()) return;
+    var v = document.getElementById('view');
+    if (!v) {
+      // body 都可能没建起来 —— 自己补一个最小容器
+      v = document.createElement('div');
+      v.id = 'view';
+      (document.body || document.documentElement).appendChild(v);
+    }
+    v.innerHTML =
+      '<div class="page">' +
+      '  <div class="empty">' +
+      '    <div class="ico">📶</div>' +
+      '    <div class="t">加载有点慢</div>' +
+      '    <div class="s">页面资源没有加载成功，请检查网络后重试。</div>' +
+      '  </div>' +
+      '  <button class="btn block mt12" id="boot-retry">重新加载</button>' +
+      '</div>';
+    var b = document.getElementById('boot-retry');
+    if (b) b.addEventListener('click', function () { location.reload(); });
+  }, TIMEOUT_MS);
+})();
+</script>
+</body>
+</html>
